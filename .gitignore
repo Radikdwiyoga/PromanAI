@@ -1,0 +1,52 @@
+﻿# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+firebase-debug.log*
+firestore-debug.log
+pubsub-debug.log
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# TypeScript build cache
+*.tsbuildinfo
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+
+# ============================================================
+# RAHASIA & KONFIGURASI LOKAL — JANGAN PERNAH DI-COMMIT
+# ============================================================
+
+# Environment variables & secrets (API keys AI, Firebase, Telegram)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+
+# Firebase local runtime secrets (Gmail app password, dll)
+*.runtimeconfig.json
+.runtimeconfig.json
+functions/.runtimeconfig.json
+
+# Firebase emulator / deployment state (lokal)
+.firebase/
+firebase-debug.log
+.firebaserc.local
+
+# Build artifacts yang berisi secrets hasil compile
+dist/
+dist-ssr/
+
+# Service account keys (jika pernah didownload dari Firebase Console)
+*serviceAccount*.json
+*firebase-adminsdk*.json
