@@ -50,3 +50,7 @@ dist-ssr/
 # Service account keys (jika pernah didownload dari Firebase Console)
 *serviceAccount*.json
 *firebase-adminsdk*.json
+# Credential Admin SDK untuk script migrasi (scripts/migrate-users-to-auth.mjs)
+service-account.json
+serviceAccountKey.json
+scripts/.keys/
