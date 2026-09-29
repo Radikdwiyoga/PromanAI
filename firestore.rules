@@ -1,0 +1,109 @@
+rules_version = '2';
+
+// ProMan AI — Firestore Security Rules
+//
+// Konteks: frontend (src/services/firestoreService.ts) memakai onSnapshot
+// langsung ke collection, jadi rules di sini adalah satu-satunya penjaga data.
+//
+// Prinsip:
+//   1. Tidak ada akses anonim sama sekali (semua read/write butuh login).
+//   2. User hanya boleh menulis dokumennya sendiri (users/{uid}).
+//   3. Perubahan data operasional hanya Super Admin.
+//   4. Dokumen users tidak pernah bisa dihapus dari sisi client.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper ──────────────────────────────────────────────────────────
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // UID di Firebase Auth = document ID di /users.
+    function profilePath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    // exists() dicek lebih dulu supaya get() ke dokumen yang belum ada
+    // tidak membuat seluruh ekspresi error (di rules, error berarti deny).
+    function isSuperAdmin() {
+      return isSignedIn()
+        && exists(profilePath())
+        && get(profilePath()).data.personaType == 'Super Admin';
+    }
+
+    function isSelf(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function canWriteUser(userId) {
+      return isSuperAdmin() || isSelf(userId);
+    }
+
+    // ── users ───────────────────────────────────────────────────────────
+    // Register & login menulis profil di sini, jadi create/update oleh
+    // pemilik dokumen sendiri tetap harus diizinkan. Super Admin juga boleh
+    // membuat profil user lain dari panel Admin Settings.
+    match /users/{userId} {
+
+      allow read: if isSignedIn();
+
+      // Catatan: UID di Auth milik user yang baru dibuat, jadi isSelf(userId)
+      // akan SALAH saat Super Admin yang membuat dokumen tersebut. Karena itu
+      // Super Admin punya jalur terpisah.
+      allow create: if isSelf(userId) || isSuperAdmin();
+
+      allow update: if canWriteUser(userId);
+
+      // Penghapusan user hanya dari panel Admin.
+      allow delete: if isSuperAdmin();
+
+      // CATATAN — kolom `password` tidak lagi dipakai di dokumen ini. Kredensial
+      // seluruhnya milik Firebase Auth, dan reset password lewat email adalah
+      // satu-satunya jalur yang sah. Field `password` pada dokumen user lama
+      // dibersihkan oleh scripts/migrate-users-to-auth.mjs.
+    }
+
+    // ── Data operasional ───────────────────────────────────────────────
+    // Satu blok per collection agar tidak ada collection yang tanpa sengaja
+    // tetap terbuka.
+
+    match /projects/{projectId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    match /comments/{commentId} {
+      allow read: if isSignedIn();
+      // Semua user yang login boleh berkomentar.
+      allow create: if isSignedIn();
+      // Hapus hanya oleh penulisnya sendiri atau Super Admin.
+      allow update, delete: if isSuperAdmin()
+        || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    match /activity_logs/{logId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // ── Pengaturan sistem ──────────────────────────────────────────────
+    match /settings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // ── Default: tolak semua yang tidak dicocokkan di atas ──────────────
+    // Menutup collection baru yang belum didefinisikan di file ini.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
