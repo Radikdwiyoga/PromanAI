@@ -27,10 +27,15 @@ import {
   Camera,
   UserCheck,
   UserX,
-  Clock
+  Clock,
+  DatabaseBackup,
+  FileSpreadsheet,
+  Download,
+  ShieldAlert
 } from 'lucide-react';
 import { UserAvatar } from '../common/UserAvatar';
 import { sendTelegramTestMessage, getTelegramConfigStatus, TelegramSendResult } from '../../services/telegramService';
+import { exportTasksToExcel, exportFullSystemBackup } from '../../services/backupService';
 
 
 const PRESET_AVATARS = [
@@ -42,25 +47,9 @@ const PRESET_AVATARS = [
   'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=150&auto=format&fit=crop&q=80',
 ];
 
-// Komponen password dengan toggle show/hide per baris
-const PasswordCell: React.FC<{ password: string }> = ({ password }) => {
-  const [visible, setVisible] = useState(false);
-  return (
-    <div className="flex items-center gap-1.5">
-      <KeyRound className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-      <span className={`font-mono text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 ${visible ? 'text-slate-800 dark:text-slate-200' : 'tracking-widest text-slate-400 dark:text-slate-500'}`}>
-        {visible ? password : '••••••'}
-      </span>
-      <button
-        onClick={() => setVisible(v => !v)}
-        className="p-0.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
-        title={visible ? 'Sembunyikan password' : 'Tampilkan password'}
-      >
-        {visible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-      </button>
-    </div>
-  );
-};
+// Password tidak pernah disimpan di Firestore, jadi tidak ada yang bisa
+// ditampilkan di sini. User hanya bisa mengganti passwordnya sendiri lewat
+// menu Profil > Ganti Password, atau melalui tautan reset ke email.
 
 export const AdminSettingsView: React.FC = () => {
   const {
@@ -71,13 +60,16 @@ export const AdminSettingsView: React.FC = () => {
     updateUser,
     deleteUser,
     activityLogs,
+    tasks,
+    projects,
+    comments,
     showToast,
     isSuperAdmin,
     currentUser,
     setActiveView
   } = useProject();
 
-  const [activeTab, setActiveTab] = useState<'general' | 'ai_privacy' | 'team_capacity' | 'audit_system'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'ai_privacy' | 'team_capacity' | 'audit_system' | 'backup'>('general');
   const [formSettings, setFormSettings] = useState<SystemSettings>(systemSettings);
 
   // User CRUD Modal State
@@ -86,8 +78,9 @@ export const AdminSettingsView: React.FC = () => {
 
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
-  const [userPassword, setUserPassword] = useState('123456');
+  const [userPassword, setUserPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [isSavingUser, setIsSavingUser] = useState(false);
   const [userRole, setUserRole] = useState('IT Systems Engineer');
   const [userDepartment, setUserDepartment] = useState<User['department']>('Technology');
   const [userCapacity, setUserCapacity] = useState(40);
@@ -136,7 +129,7 @@ export const AdminSettingsView: React.FC = () => {
     setEditingUser(null);
     setUserName('');
     setUserEmail('');
-    setUserPassword('123456');
+    setUserPassword('');
     setUserRole('IT Systems Engineer');
     setUserDepartment('Technology');
     setUserCapacity(40);
@@ -151,7 +144,7 @@ export const AdminSettingsView: React.FC = () => {
     setEditingUser(u);
     setUserName(u.name);
     setUserEmail(u.email);
-    setUserPassword(u.password || '123456');
+    setUserPassword('');
     setUserRole(u.role);
     setUserDepartment(u.department);
     setUserCapacity(u.capacityHours);
@@ -172,6 +165,34 @@ export const AdminSettingsView: React.FC = () => {
     showToast('Pendaftaran akun telah ditolak.', 'info');
   };
 
+  // ── Excel Backup Handlers ───────────────────────────────────────────────
+  const handleExportTasks = () => {
+    try {
+      exportTasksToExcel(tasks, users, projects, systemSettings);
+      showToast(`Backup ${tasks.length} tugas ke Excel berhasil diunduh!`, 'success');
+    } catch (err) {
+      console.error('Excel tasks export failed:', err);
+      showToast('Gagal membuat backup Excel tugas. Coba lagi.', 'warning');
+    }
+  };
+
+  const handleExportFullBackup = () => {
+    try {
+      exportFullSystemBackup({
+        tasks,
+        projects,
+        users,
+        comments,
+        activityLogs,
+        systemSettings,
+      });
+      showToast('Backup lengkap sistem (7 sheet) berhasil diunduh ke Excel!', 'success');
+    } catch (err) {
+      console.error('Excel full backup failed:', err);
+      showToast('Gagal membuat backup Excel sistem. Coba lagi.', 'warning');
+    }
+  };
+
   const handleAvatarFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -190,36 +211,51 @@ export const AdminSettingsView: React.FC = () => {
     }
   };
 
-  const handleUserSubmit = (e: React.FormEvent) => {
+  const handleUserSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userName.trim() || !userEmail.trim()) return;
 
-    if (editingUser) {
-      updateUser(editingUser.id, {
-        name: userName,
-        email: userEmail,
-        password: userPassword,
-        role: userRole,
-        department: userDepartment,
-        capacityHours: userCapacity,
-        personaType: userPersona,
-        status: userStatus,
-        avatar: userAvatar,
-      });
-    } else {
-      createUser({
-        name: userName,
-        email: userEmail,
-        password: userPassword,
-        role: userRole,
-        department: userDepartment,
-        capacityHours: userCapacity,
-        personaType: userPersona,
-        status: userStatus,
-        avatar: userAvatar,
-      });
+    if (!editingUser && userPassword.length < 6) {
+      showToast('Password awal minimal 6 karakter!', 'warning');
+      return;
     }
-    setIsUserModalOpen(false);
+
+    setIsSavingUser(true);
+
+    try {
+      if (editingUser) {
+        // Email sengaja tidak ikut diubah: email adalah identitas di Firebase
+        // Auth. Mengubahnya di Firestore hanya akan membuat profil dan akun
+        // Auth tidak cocok.
+        updateUser(editingUser.id, {
+          name: userName,
+          role: userRole,
+          department: userDepartment,
+          capacityHours: userCapacity,
+          personaType: userPersona,
+          status: userStatus,
+          avatar: userAvatar,
+        });
+      } else {
+        await createUser({
+          name: userName,
+          email: userEmail,
+          password: userPassword,
+          role: userRole,
+          department: userDepartment,
+          capacityHours: userCapacity,
+          personaType: userPersona,
+          status: userStatus,
+          avatar: userAvatar,
+        });
+      }
+      setIsUserModalOpen(false);
+    } catch (err: any) {
+      console.error('Create user failed:', err);
+      showToast(err?.message || 'Gagal membuat akun pengguna.', 'warning');
+    } finally {
+      setIsSavingUser(false);
+    }
   };
 
   // Telegram Test Handler
@@ -246,6 +282,7 @@ export const AdminSettingsView: React.FC = () => {
       badge: pendingUsers.length > 0 ? pendingUsers.length : undefined
     },
     { id: 'audit_system', label: 'Audit Log & Sistem', icon: <Activity className="w-4 h-4" /> },
+    { id: 'backup', label: 'Backup & Ekspor Data', icon: <DatabaseBackup className="w-4 h-4" /> },
   ];
 
   return (
@@ -479,9 +516,9 @@ export const AdminSettingsView: React.FC = () => {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-xs font-bold text-slate-900 dark:text-slate-300 uppercase tracking-wider">
-                    Daftar Seluruh Pengguna &amp; Password ({users.length} Akun)
+                    Daftar Seluruh Pengguna ({users.length} Akun)
                   </h3>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">Tambah pengguna manual, ubah status akun, password login, atau perbarui kapasitas jam kerja.</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">Tambah pengguna manual, ubah status akun, atau perbarui kapasitas jam kerja. Password dikelola oleh Firebase Auth — user mengubahnya sendiri lewat tautan reset ke email.</p>
                 </div>
 
                 <button
@@ -499,7 +536,6 @@ export const AdminSettingsView: React.FC = () => {
                     <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/90 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
                       <th className="p-3.5">Nama &amp; Profil</th>
                       <th className="p-3.5">Status Akun</th>
-                      <th className="p-3.5">Password Login</th>
                       <th className="p-3.5">Role / Jabatan</th>
                       <th className="p-3.5">Departemen</th>
                       <th className="p-3.5">Kapasitas (Jam/Mg)</th>
@@ -549,9 +585,6 @@ export const AdminSettingsView: React.FC = () => {
                             )}
                           </td>
 
-                          <td className="p-3.5">
-                            <PasswordCell password={u.password || '123456'} />
-                          </td>
                           <td className="p-3.5 font-medium">{u.role}</td>
                           <td className="p-3.5">
                             <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-medium">
@@ -577,9 +610,17 @@ export const AdminSettingsView: React.FC = () => {
                               </button>
                               {u.id !== currentUser.id && (
                                 <button
-                                  onClick={() => deleteUser(u.id)}
+                                  onClick={() => {
+                                    const nama = u.name || u.email;
+                                    const ok = window.confirm(
+                                      `Nonaktifkan akun ${nama}?\n\n` +
+                                      'Akun tidak akan bisa login lagi dan tidak bisa diaktifkan kembali dari panel ini. ' +
+                                      'Tugas yang sudah ditugaskan ke user ini tetap tersimpan.'
+                                    );
+                                    if (ok) deleteUser(u.id);
+                                  }}
                                   className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-600 dark:text-rose-400 transition"
-                                  title="Hapus Pengguna"
+                                  title="Nonaktifkan Pengguna"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
@@ -689,6 +730,86 @@ export const AdminSettingsView: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* Tab 5: Backup & Ekspor Data */}
+        {activeTab === 'backup' && (
+          <div className="space-y-4 animate-fade-in max-w-4xl">
+            {/* Intro Card */}
+            <div className="rounded-3xl bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 p-5 shadow-sm space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 flex items-center justify-center border border-emerald-200 dark:border-emerald-500/30 shrink-0">
+                  <DatabaseBackup className="w-5 h-5" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">Backup &amp; Ekspor Data ke Excel</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                    Unduh seluruh data ProMan ke format <strong className="text-slate-700 dark:text-slate-300">Microsoft Excel (.xlsx)</strong> — file dibuka langsung di Excel, Google Sheets, atau WPS. Gunakan secara rutin sebagai cadangan (backup) data operasional tim Anda.
+                  </p>
+                </div>
+              </div>
+
+              {/* Snapshot Counts */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 pt-1">
+                {[
+                  { label: 'Proyek', value: projects.length },
+                  { label: 'Tugas', value: tasks.length },
+                  { label: 'Pengguna', value: users.length },
+                  { label: 'Komentar', value: comments.length },
+                  { label: 'Aktivitas', value: activityLogs.length },
+                ].map(stat => (
+                  <div key={stat.label} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-center">
+                    <div className="text-lg font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">{stat.value}</div>
+                    <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mt-0.5">{stat.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Full System Backup Card */}
+            <div className="rounded-3xl bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 p-5 shadow-sm space-y-3">
+              <div className="flex items-center gap-2">
+                <DatabaseBackup className="w-4 h-4 text-emerald-600" />
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">Backup Lengkap Sistem</h4>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                Satu file Excel dengan <strong>7 sheet</strong>: Ringkasan, Tugas, Proyek, Pengguna, Komentar, Aktivitas Log, dan Pengaturan Sistem.
+              </p>
+              <button
+                onClick={handleExportFullBackup}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-xs font-bold text-white transition flex items-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-95 cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                <span>Unduh Backup Lengkap (.xlsx)</span>
+              </button>
+            </div>
+
+            {/* Tasks Only Card */}
+            <div className="rounded-3xl bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 p-5 shadow-sm space-y-3">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-4 h-4 text-teal-600" />
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">Backup Tugas Saja</h4>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                Fokus ekspor seluruh tugas dengan detail lengkap (status, prioritas, assignee, sub-tugas, risiko AI) — tanpa data pengguna/sistem.
+              </p>
+              <button
+                onClick={handleExportTasks}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-teal-600 hover:bg-teal-700 text-xs font-bold text-white transition flex items-center gap-2 shadow-lg shadow-teal-500/20 active:scale-95 cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>Unduh Backup Tugas (.xlsx)</span>
+              </button>
+            </div>
+
+            {/* Security Note */}
+            <div className="flex items-start gap-2 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-500/30 text-amber-800 dark:text-amber-300">
+              <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+              <p className="text-[11px] leading-relaxed">
+                <strong>Catatan keamanan:</strong> Field password akun pengguna TIDAK pernah disertakan dalam file backup. File Excel yang diunduh mengandung data operasional sensitif — simpan di tempat aman dan jangan bagikan secara publik.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Modal Add / Edit User with Avatar Upload & Presets */}
@@ -781,35 +902,51 @@ export const AdminSettingsView: React.FC = () => {
                   value={userEmail}
                   onChange={(e) => setUserEmail(e.target.value)}
                   placeholder="nama@bitcorp.id"
-                  className="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                  readOnly={!!editingUser}
+                  className="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed"
                   required
                 />
               </div>
 
-              {/* Password Management */}
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                  <KeyRound className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Password Login Pengguna <span className="text-rose-500">*</span></span>
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={userPassword}
-                    onChange={(e) => setUserPassword(e.target.value)}
-                    placeholder="Masukkan password..."
-                    className="w-full p-2.5 pr-10 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
+              {/* Password — hanya untuk user baru. Password user yang sudah ada
+                  tidak bisa diubah dari sini: itu hanya bisa lewat tautan reset
+                  yang Firebase kirim ke email pemilik akun. */}
+              {!editingUser && (
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Password Awal <span className="text-rose-500">*</span></span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={userPassword}
+                      onChange={(e) => setUserPassword(e.target.value)}
+                      placeholder="Minimal 6 karakter..."
+                      className="w-full p-2.5 pr-10 rounded-xl bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    Disampaikan ke user di luar aplikasi ini dan tidak disimpan di mana pun. Minta user segera menggantinya lewat menu &ldquo;Lupa Password&rdquo;.
+                  </p>
                 </div>
-              </div>
+              )}
+
+              {editingUser && (
+                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30">
+                  <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+                    Email dan password akun ini dikelola Firebase Auth. Untuk mengganti password, minta user klik <strong>&ldquo;Lupa Password&rdquo;</strong> di halaman login dan mengikuti tautan yang dikirım ke email mereka.
+                  </p>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
@@ -893,9 +1030,12 @@ export const AdminSettingsView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-xs font-bold text-white shadow-lg shadow-emerald-500/20"
+                  disabled={isSavingUser}
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-xs font-bold text-white shadow-lg shadow-emerald-500/20"
                 >
-                  {editingUser ? 'Simpan Data & Password' : 'Tambah Anggota'}
+                  {isSavingUser
+                    ? 'Menyimpan...'
+                    : editingUser ? 'Simpan Perubahan' : 'Tambah Anggota'}
                 </button>
               </div>
             </form>

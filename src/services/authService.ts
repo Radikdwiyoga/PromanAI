@@ -12,7 +12,6 @@ import {
 import { auth, db } from './firebase';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { User } from '../types';
-import { INITIAL_USERS } from '../data/initialData';
 
 export const loginWithFirebase = async (email: string, password: string): Promise<{ user: FirebaseUser; userProfile: User }> => {
   try {
@@ -20,24 +19,24 @@ export const loginWithFirebase = async (email: string, password: string): Promis
     const fbUser = userCredential.user;
     
     // Fetch profile from Firestore
-    let profile = await getUserProfileFromDb(fbUser.uid);
+    const profile = await getUserProfileFromDb(fbUser.uid);
+
     if (!profile) {
-      // Find matching template in INITIAL_USERS or create default
-      const template = INITIAL_USERS.find(u => u.email.toLowerCase() === email.trim().toLowerCase());
-      profile = {
-        id: fbUser.uid,
-        name: template?.name || fbUser.displayName || email.split('@')[0],
-        email: fbUser.email || email,
-        password: password,
-        avatar: template?.avatar || `https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80`,
-        role: template?.role || 'Team Member',
-        department: template?.department || 'Technology',
-        capacityHours: template?.capacityHours || 40,
-        allocatedHours: template?.allocatedHours || 0,
-        personaType: template?.personaType || 'Member',
-        status: template?.status || 'active',
-      };
-      await saveUserProfileToDb(profile);
+      // Akun ada di Firebase Auth tapi dokumen /users/{uid}-nya tidak ada.
+      //
+      // Ini kondisi user yang sudah DIHAPUS dari panel Admin: dokumen Firestore
+      //-nya dihapus, tapi akun Auth-nya masih hidup. Sebelumnya blok ini
+      // membuat ulang profil otomatis dengan status 'active', sehingga user
+      // yang sudah dihapus bisa langsung masuk kembali setiap kali mencoba.
+      //
+      // Sekarang akses ditolak, dan akunnya di-sign-out supaya sesi di browser
+      // tidak tertinggal.
+      await signOut(auth);
+      const removedError: any = new Error(
+        'Akun ini tidak lagi aktif. Silakan hubungi Super Admin.'
+      );
+      removedError.code = 'auth/account-removed';
+      throw removedError;
     }
 
     // Check Account Verification Status
@@ -57,30 +56,10 @@ export const loginWithFirebase = async (email: string, password: string): Promis
 
     return { user: fbUser, userProfile: profile };
   } catch (error: any) {
-    if (error.code === 'auth/pending-approval' || error.code === 'auth/account-rejected') {
-      throw error;
-    }
-
-    // If user not found in auth, try matching initial demo seed
-    if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
-      const template = INITIAL_USERS.find(u => u.email.toLowerCase() === email.trim().toLowerCase());
-      if (template) {
-        try {
-          const newCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
-          const newFbUser = newCredential.user;
-          const newProfile: User = {
-            ...template,
-            id: newFbUser.uid,
-            password: password,
-            status: template.status || 'active',
-          };
-          await saveUserProfileToDb(newProfile);
-          return { user: newFbUser, userProfile: newProfile };
-        } catch (regError) {
-          throw regError;
-        }
-      }
-    }
+    // Tidak ada lagi fallback "buat akun otomatis dengan password bebas".
+    // Seluruh user sudah dimigrasikan ke Firebase Auth, dan fallback tersebut
+    // sebelumnyaanyone bisa masuk sebagai user mana saja cukup mengetik
+    // 123456 atau admin123.
     throw error;
   }
 };
@@ -99,7 +78,7 @@ export const registerWithFirebase = async (data: {
     id: fbUser.uid,
     name: data.name.trim(),
     email: data.email.trim(),
-    password: data.password,
+    // Password TIDAK disimpan di Firestore. Kredensial milik Firebase Auth.
     avatar: `https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80`,
     role: data.role?.trim() || `${data.department} Specialist`,
     department: data.department,
@@ -122,6 +101,69 @@ export const logoutFromFirebase = async (): Promise<void> => {
 };
 
 /**
+ * Membuat akun Firebase Auth untuk user lain TANPA mengubah sesi yang sedang
+ * berjalan.
+ *
+ * Kenapa tidak pakai `createUserWithEmailAndPassword` dari SDK: fungsi itu
+ * sekaligus MEMASUKKAN browser ke akun yang baru dibuat. Akibatnya Super Admin
+ * yang sedang menambah anggota baru langsung ter-logout dari sesinya, dan
+ * aplikasi tidak bisa melanjutkan.
+ *
+ * Identity Platform REST API dipanggil langsung sebagai gantinya. Endpoint-nya
+ * sama persis dengan yang dipakai SDK di belakang layar, tapi tidak menyentuh
+ * state auth di client.
+ *
+ * @returns UID dari Firebase Auth, dipakai sebagai document ID di /users.
+ * @throws dengan `code` yang bisa dibaca pemanggil bila email sudah terpakai.
+ */
+export const createAuthAccount = async (email: string, password: string): Promise<string> => {
+  const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
+  if (!apiKey) {
+    const err: any = new Error('VITE_FIREBASE_API_KEY belum dikonfigurasi.');
+    err.code = 'auth/missing-api-key';
+    throw err;
+  }
+
+  const res = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: email.trim(),
+        password,
+        returnSecureToken: false,
+      }),
+    }
+  );
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    const raw = data?.error?.message ?? '';
+    const err: any = new Error('Gagal membuat akun autentikasi.');
+    if (raw.includes('EMAIL_EXISTS')) {
+      err.code = 'auth/email-already-in-use';
+      err.message = 'Email tersebut sudah punya akun. Gunakan fitur edit, bukan tambah baru.';
+    } else if (raw.includes('WEAK_PASSWORD')) {
+      err.code = 'auth/weak-password';
+      err.message = 'Password terlalu lemah. Gunakan minimal 6 karakter.';
+    } else if (raw.includes('INVALID_EMAIL')) {
+      err.code = 'auth/invalid-email';
+      err.message = 'Format email tidak valid.';
+    } else if (raw.includes('OPERATION_NOT_ALLOWED') || raw.includes('BLOCKING_FUNCTION')) {
+      err.code = 'auth/operation-not-allowed';
+      err.message = 'Pendaftaran email/password dinonaktifkan di Firebase Console.';
+    } else {
+      err.message = `Gagal membuat akun autentikasi (${res.status}).`;
+    }
+    throw err;
+  }
+
+  return data.localId as string;
+};
+
+/**
  * 1. Kirim Email Reset Password via Firebase Auth
  */
 export const sendPasswordResetLink = async (email: string): Promise<void> => {
@@ -130,6 +172,9 @@ export const sendPasswordResetLink = async (email: string): Promise<void> => {
 
 /**
  * 2. Ganti Password Pengguna yang Sedang Login
+ *
+ * Password hanya hidup di Firebase Auth. Tidak ada lagi penulisan ke Firestore:
+ * kolom `password` dihapus karena bisa dibaca siapa pun yang punya akses baca.
  */
 export const changeUserPassword = async (
   userId: string,
@@ -137,36 +182,28 @@ export const changeUserPassword = async (
   oldPassword: string,
   newPassword: string
 ): Promise<void> => {
-  // Jika user aktif di Firebase Auth, re-authenticate dan update password
-  if (auth.currentUser && auth.currentUser.email) {
-    try {
-      const credential = EmailAuthProvider.credential(auth.currentUser.email, oldPassword);
-      await reauthenticateWithCredential(auth.currentUser, credential);
-      await updatePassword(auth.currentUser, newPassword);
-    } catch (e: any) {
-      console.warn('Firebase reauth/updatePassword error:', e);
-      // Jika credential invalid di auth tapi ada di local state, lanjutkan update database
-    }
+  if (!auth.currentUser || !auth.currentUser.email) {
+    throw new Error('Sesi tidak aktif. Silakan login ulang sebelum mengganti password.');
   }
 
-  // Update password di Firestore document
   try {
-    const userDocRef = doc(db, 'users', userId);
-    await updateDoc(userDocRef, { password: newPassword });
-  } catch (e) {
-    console.warn('Firestore user password update fallback:', e);
+    const credential = EmailAuthProvider.credential(auth.currentUser.email, oldPassword);
+    await reauthenticateWithCredential(auth.currentUser, credential);
+    await updatePassword(auth.currentUser, newPassword);
+  } catch (e: any) {
+    // Password lama salah akan sampai ke sini. Jangan ditelan diam-diam,
+    // karena user akan mengira passwordnya sudah diganti.
+    if (e?.code === 'auth/wrong-password' || e?.code === 'auth/invalid-credential') {
+      throw new Error('Password lama salah. Silakan periksa kembali.');
+    }
+    if (e?.code === 'auth/weak-password') {
+      throw new Error('Password baru terlalu lemah. Gunakan minimal 6 karakter.');
+    }
+    if (e?.code === 'auth/requires-recent-login') {
+      throw new Error('Sesi terlalu lama. Silakan logout lalu login ulang.');
+    }
+    throw new Error('Gagal mengganti password. Silakan coba lagi.');
   }
-};
-
-/**
- * 3. Reset Password Langsung (untuk kebutuhan Lupa Password mandiri/demo)
- */
-export const resetUserPasswordDirectly = async (
-  userId: string,
-  newPassword: string
-): Promise<void> => {
-  const userDocRef = doc(db, 'users', userId);
-  await updateDoc(userDocRef, { password: newPassword });
 };
 
 export const getUserProfileFromDb = async (userId: string): Promise<User | null> => {

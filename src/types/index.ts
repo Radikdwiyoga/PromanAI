@@ -38,6 +38,8 @@ export interface User {
   allocatedHours: number;
   personaType: PersonaType;
   status?: 'active' | 'pending' | 'rejected';
+  /** Diisi saat akun dinonaktifkan Super Admin dari panel pengaturan. */
+  disabledAt?: string;
   registeredAt?: string;
 }
 

@@ -36,12 +36,16 @@ import {
   deleteTaskInDb,
   createUserInDb,
   updateUserInDb,
-  deleteUserInDb,
   addCommentToDb,
   addActivityLogInDb,
   updateSystemSettingsInDb
 } from '../services/firestoreService';
-import { logoutFromFirebase, subscribeToAuthChanges } from '../services/authService';
+import {
+  createAuthAccount,
+  getUserProfileFromDb,
+  logoutFromFirebase,
+  subscribeToAuthChanges,
+} from '../services/authService';
 import { generateLiveExecutiveSummary, queryLiveProjectCopilot } from '../services/geminiService';
 import { 
   sendTaskCreatedNotification, 
@@ -93,9 +97,9 @@ interface ProjectContextType {
   users: User[];
   currentUser: User;
   setCurrentUserId: (id: string) => void;
-  createUser: (userData: Omit<User, 'id' | 'allocatedHours'>) => User;
+  createUser: (userData: Omit<User, 'id' | 'allocatedHours'> & { password: string }) => Promise<User>;
   updateUser: (userId: string, updates: Partial<User>) => void;
-  deleteUser: (userId: string) => void;
+  deleteUser: (userId: string) => Promise<void>;
   
   // Tasks & Details
   tasks: Task[];
@@ -183,8 +187,61 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // 1. Initial Firestore Seeder & Real-Time Sync Subscriptions
+  // 1. Pantau status autentikasi Firebase (selalu aktif, termasuk saat restore sesi)
+  //
+  // Auth listener harus jalan sejak app mount supaya sesi yang masih tersimpan
+  // di localStorage langsung di-restore tanpa perlu login ulang.
+  //
+  // Sesi TIDAK langsung dipercaya begitu saja. `onAuthStateChanged` bisa memunculkan
+  // user dari cache local tanpa contacts server, jadi user yang sudah dinonaktifkan
+  // (documen /users-nya dihapus atau statusnya 'rejected') bisa lolos hanya
+  // karena masih punya sesi tersimpan. Karena itu profil selalu diverifikasi ke
+  // Firestore, dan kalau tidak valid sesinya langsung di-putuskan.
   useEffect(() => {
+    return subscribeToAuthChanges(async (fbUser) => {
+      if (!fbUser) {
+        setIsAuthenticated(false);
+        return;
+      }
+
+      const profile = await getUserProfileFromDb(fbUser.uid);
+
+      if (!profile) {
+        // Akun ada di Auth tapi sudah tidak aktif di aplikasi.
+        await logoutFromFirebase().catch(() => {});
+        setCurrentUserId(fbUser.uid);
+        setIsAuthenticated(false);
+        showToast('Akun ini telah dinonaktifkan. Silakan hubungi Super Admin.', 'warning');
+        return;
+      }
+
+      if (profile.status === 'pending' || profile.status === 'rejected') {
+        await logoutFromFirebase().catch(() => {});
+        setCurrentUserId(fbUser.uid);
+        setIsAuthenticated(false);
+        showToast(
+          profile.status === 'pending'
+            ? 'Akun Anda masih menunggu persetujuan Super Admin.'
+            : 'Akun ini telah dinonaktifkan. Silakan hubungi Super Admin.',
+          'warning'
+        );
+        return;
+      }
+
+      setCurrentUserId(fbUser.uid);
+      setIsAuthenticated(true);
+    });
+  }, []);
+
+  // 2. Seeder & Real-Time Sync — HANYA setelah terautentikasi
+  //
+  // Firestore rules menolak semua akses anonim, jadi subscription dan seeding
+  // harus ditunda sampai ada sesi login. Jika tidak, onSnapshot akan
+  // langsung error PERMISSION_DENIED dan data tidak pernah ter-load.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    // Seed butuh hak Super Admin, jadi hanya dicoba setelah user doc tersedia.
     seedDatabaseIfEmpty();
 
     const unsubProjects = subscribeToProjects((loadedProjects) => {
@@ -211,15 +268,6 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       setSystemSettings(loadedSettings);
     });
 
-    const unsubAuth = subscribeToAuthChanges((fbUser) => {
-      if (fbUser) {
-        setIsAuthenticated(true);
-        setCurrentUserId(fbUser.uid);
-      } else {
-        setIsAuthenticated(false);
-      }
-    });
-
     return () => {
       unsubProjects();
       unsubTasks();
@@ -227,9 +275,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       unsubComments();
       unsubLogs();
       unsubSettings();
-      unsubAuth();
     };
-  }, []);
+  }, [isAuthenticated]);
 
   const login = (user: User) => {
     setCurrentUserId(user.id);
@@ -393,14 +440,21 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     showToast('Project berhasil dihapus!', 'info');
   };
 
-  const createUser = (userData: Omit<User, 'id' | 'allocatedHours'>) => {
+  const createUser = async (userData: Omit<User, 'id' | 'allocatedHours' | 'password'> & { password: string }) => {
+    // Akun harus dibuat di Firebase Auth DULU. Kalau dokumen Firestore lebih dulu,
+    // user akan punya profil tapi tidak bisa login sama sekali — persis kondisi
+    // yang membuat 14 user lama tidak bisa masuk sebelum dimigrasi.
+    const authUid = await createAuthAccount(userData.email, userData.password);
+
+    const { password, ...profileData } = userData;
     const newUser: User = {
-      ...userData,
-      id: `user-${Date.now()}`,
+      ...profileData,
+      id: authUid,
       allocatedHours: 0,
     };
+
+    await createUserInDb(newUser);
     setRawUsers(prev => [...prev, newUser]);
-    createUserInDb(newUser);
     showToast(`Pengguna ${newUser.name} berhasil ditambahkan!`, 'success');
     return newUser;
   };
@@ -411,14 +465,42 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     showToast('Data pengguna berhasil diperbarui!', 'success');
   };
 
-  const deleteUser = (userId: string) => {
+  /**
+   * Menonaktifkan pengguna.
+   *
+   * Ini SENGAJA tidak hard-delete. Akun Firebase Auth tidak bisa dinonaktifkan
+   * dari sisi client (butuh Admin SDK / Cloud Function), jadi dokumen yang
+   * dihapus di Firestore akan meninggalkan akun Auth yang masih hidup —
+   * pemegangnya tetap bisa login. Dan sebelumnya `loginWithFirebase` membuat
+   * ulang profil otomatis untuk UID yang dokumennya hilang, sehingga user
+   * yang "dihapus" bisa langsung masuk lagi.
+   *
+   * Sekarang: dokumen tetap ada tapi status-nya 'rejected', dan login
+   * memblokir status tersebut. Efeknya sama seperti dihapus dari sisi user,
+   * tapi tidak meninggalkan pintu masuk terbuka.
+   */
+  const deleteUser = async (userId: string) => {
     if (userId === currentUser.id) {
-      showToast('Tidak dapat menghapus akun Anda sendiri!', 'warning');
+      showToast('Tidak dapat menonaktifkan akun Anda sendiri!', 'warning');
       return;
     }
-    setRawUsers(prev => prev.filter(u => u.id !== userId));
-    deleteUserInDb(userId);
-    showToast('Pengguna berhasil dihapus!', 'info');
+
+    const target = rawUsers.find(u => u.id === userId);
+    if (!target) return;
+
+    try {
+      await updateUserInDb(userId, {
+        status: 'rejected',
+        disabledAt: new Date().toISOString(),
+      });
+      setRawUsers(prev =>
+        prev.map(u => (u.id === userId ? { ...u, status: 'rejected' as const } : u))
+      );
+      showToast(`${target.name} dinonaktifkan. Akunnya tidak bisa login lagi.`, 'info');
+    } catch (e) {
+      console.error('Gagal menonaktifkan pengguna:', e);
+      showToast('Gagal menonaktifkan pengguna. Coba lagi.', 'warning');
+    }
   };
 
   const createTask = (taskData: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'commentsCount'>) => {

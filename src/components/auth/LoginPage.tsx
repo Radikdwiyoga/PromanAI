@@ -20,13 +20,13 @@ import {
   Clock,
   Key
 } from 'lucide-react';
-import { loginWithFirebase, registerWithFirebase, sendPasswordResetLink, resetUserPasswordDirectly } from '../../services/authService';
+import { loginWithFirebase, registerWithFirebase, sendPasswordResetLink } from '../../services/authService';
 import { TechLogo } from '../common/TechLogo';
 import { SentinelBot } from '../common/SentinelBot';
 import { User } from '../../types';
 
 export const LoginPage: React.FC = () => {
-  const { users, login, updateUser, showToast } = useProject();
+  const { login, showToast } = useProject();
   const { theme, toggleTheme } = useTheme();
 
   const [mode, setMode] = useState<'signin' | 'signup' | 'pending_notice' | 'forgot_password'>('signin');
@@ -38,9 +38,6 @@ export const LoginPage: React.FC = () => {
 
   // Forgot Password State
   const [forgotEmail, setForgotEmail] = useState('');
-  const [forgotNewPassword, setForgotNewPassword] = useState('');
-  const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
-  const [showForgotNewPassword, setShowForgotNewPassword] = useState(false);
   const [forgotSuccessMessage, setForgotSuccessMessage] = useState('');
 
   // Sign Up Form State
@@ -89,29 +86,21 @@ export const LoginPage: React.FC = () => {
         setInfoMessage('Akun Anda telah terdaftar dan saat ini sedang menunggu verifikasi & persetujuan dari Super Admin. Silakan hubungi admin Anda.');
       } else if (error.code === 'auth/account-rejected') {
         setErrorMessage('Pendaftaran akun Anda ditolak oleh Super Admin.');
+      } else if (error.code === 'auth/account-removed') {
+        setErrorMessage('Akun ini telah dinonaktifkan. Silakan hubungi Super Admin.');
+      } else if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        // Firebase v9+ memakai 'invalid-credential' untuk email salah maupun
+        // password salah (demang mencegah enumerasi user), dan 'user-not-found'
+        // tidak pernah dikembalikan. Jadi keduanya digabung di sini.
+        setErrorMessage('Email atau password salah. Silakan periksa kembali.');
+      } else if (error.code === 'auth/user-not-found') {
+        setErrorMessage('Email belum terdaftar. Silakan klik "Daftar Akun Baru".');
+      } else if (error.code === 'auth/too-many-requests') {
+        setErrorMessage('Terlalu banyak percobaan gagal. Silakan tunggu beberapa saat lalu coba lagi.');
+      } else if (error.code === 'auth/network-request-failed') {
+        setErrorMessage('Koneksi ke server terputus. Periksa koneksi internet Anda.');
       } else {
-        // Fallback for local demo users
-        const localTargetUser = users.find(u => u.email.toLowerCase() === email.trim().toLowerCase());
-        if (localTargetUser && (localTargetUser.password === password || password === 'admin123' || password === '123456')) {
-          if (localTargetUser.status === 'pending') {
-            setInfoMessage('Akun Anda sedang menunggu persetujuan Super Admin.');
-          } else if (localTargetUser.status === 'rejected') {
-            setErrorMessage('Akun ini telah dinonaktifkan / ditolak oleh Admin.');
-          } else {
-            login(localTargetUser);
-            showToast(`Masuk sebagai ${localTargetUser.name}`, 'info');
-          }
-        } else {
-          if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-            setErrorMessage('Password salah! Silakan periksa kembali password Anda.');
-          } else if (error.code === 'auth/user-not-found') {
-            setErrorMessage('Email belum terdaftar. Silakan klik "Daftar Akun Baru".');
-          } else if (error.code === 'auth/too-many-requests') {
-            setErrorMessage('Terlalu banyak percobaan gagal. Silakan tunggu beberapa saat.');
-          } else {
-            setErrorMessage(`Gagal login: ${error.message || 'Periksa kredensial akun Anda.'}`);
-          }
-        }
+        setErrorMessage('Gagal login. Silakan coba lagi atau hubungi Super Admin.');
       }
     } finally {
       setIsLoading(false);
@@ -169,40 +158,33 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    if (forgotNewPassword.length < 6) {
-      setErrorMessage('Password baru minimal 6 karakter!');
-      return;
-    }
-
-    if (forgotNewPassword !== forgotConfirmPassword) {
-      setErrorMessage('Konfirmasi password baru tidak cocok!');
-      return;
-    }
-
     setIsLoading(true);
 
     try {
-      // Find user in database or local state
-      const targetUser = users.find(u => u.email.toLowerCase() === forgotEmail.trim().toLowerCase());
-      
-      if (targetUser) {
-        // Direct reset in Firestore & local state
-        await resetUserPasswordDirectly(targetUser.id, forgotNewPassword);
-        updateUser(targetUser.id, { password: forgotNewPassword });
-      }
+      // Password tidak pernah disimpan di aplikasi ini, jadi satu-satunya cara
+      // reset yang sah adalah tautan yang dikirim Firebase ke email pemilik akun.
+      await sendPasswordResetLink(forgotEmail.trim());
+      setForgotSuccessMessage(
+        `Jika ${forgotEmail.trim()} terdaftar, tautan reset password sudah dikirim. ` +
+        'Buka email Anda dan ikuti instruksi di dalamnya untuk membuat password baru.'
+      );
+      showToast('Tautan reset password terkirim!', 'success');
+    } catch (fbErr: any) {
+      console.warn('[Reset] Firebase reset email gagal:', fbErr);
 
-      // Try sending Firebase reset email as well if supported
-      try {
-        await sendPasswordResetLink(forgotEmail.trim());
-      } catch (fbErr) {
-        console.warn('Firebase reset email note:', fbErr);
+      // Firebase sengaja tidak memberi tahu apakah email terdaftar atau tidak.
+      // Balasan yang sama dipakai untuk keduanya supaya email terdaftar tidak
+      // bisa ditebak dari sini.
+      if (fbErr?.code === 'auth/too-many-requests') {
+        setErrorMessage('Terlalu banyak permintaan reset. Silakan coba beberapa saat lagi.');
+      } else if (fbErr?.code === 'auth/missing-android-pkg-name' || fbErr?.code === 'auth/operation-not-allowed') {
+        setErrorMessage('Reset password via email belum diaktifkan. Hubungi Super Admin untuk mengatur ulang password Anda.');
+      } else {
+        setErrorMessage(
+          `Jika ${forgotEmail.trim()} terdaftar, tautan reset akan dikirim. ` +
+          'Periksa folder spam, atau hubungi Super Admin bila tautan tidak sampai.'
+        );
       }
-
-      setForgotSuccessMessage(`Password untuk ${forgotEmail} berhasil direset! Silakan kembali ke tab Masuk untuk login.`);
-      showToast('Password berhasil direset!', 'success');
-    } catch (err: any) {
-      console.error('Forgot password error:', err);
-      setErrorMessage(err.message || 'Gagal mereset password. Pastikan email Anda sudah terdaftar.');
     } finally {
       setIsLoading(false);
     }
@@ -625,7 +607,7 @@ export const LoginPage: React.FC = () => {
                   </div>
                   <div className="space-y-1">
                     <h4 className={`text-sm font-bold ${isDark ? 'text-readable' : 'text-slate-900'}`}>
-                      Password Berhasil Direset!
+                      Tautan Reset Dikirim
                     </h4>
                     <p className={`text-xs leading-relaxed ${isDark ? 'text-muted' : 'text-slate-600'}`}>
                       {forgotSuccessMessage}
@@ -642,13 +624,13 @@ export const LoginPage: React.FC = () => {
                     }}
                     className="w-full py-2.5 px-4 rounded-sm bg-signal hover:bg-signal-active text-canvas text-xs font-bold shadow-md glow-signal transition active:scale-95 cursor-pointer elevated-tray"
                   >
-                    Masuk dengan Password Baru
+                    Kembali ke Halaman Masuk
                   </button>
                 </div>
               ) : (
                 <form onSubmit={handleForgotPassword} className="space-y-3.5">
                   <p className={`text-xs ${isDark ? 'text-muted' : 'text-slate-600'}`}>
-                    Masukkan email terdaftar dan tentukan kata sandi baru Anda:
+                    Masukkan email terdaftar. Kami akan mengirimkan tautan untuk membuat password baru.
                   </p>
 
                   <div className="space-y-1">
@@ -662,53 +644,6 @@ export const LoginPage: React.FC = () => {
                         value={forgotEmail}
                         onChange={(e) => setForgotEmail(e.target.value)}
                         placeholder="nama@bitcorp.id"
-                        className={`w-full pl-10 pr-4 py-2.5 rounded-sm border text-xs placeholder:font-mono placeholder-slate-400 transition input-sentinel ${
-                          isDark ? 'bg-canvas border-white/10 text-readable' : 'bg-slate-50 border-slate-300 text-slate-900'
-                        }`}
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className={`text-xs font-bold ${isDark ? 'text-muted' : 'text-slate-700'}`}>
-                      Password Baru (Min. 6 Karakter)
-                    </label>
-                    <div className="relative">
-                      <Lock className="w-4 h-4 text-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
-                      <input
-                        type={showForgotNewPassword ? 'text' : 'password'}
-                        value={forgotNewPassword}
-                        onChange={(e) => setForgotNewPassword(e.target.value)}
-                        placeholder="••••••••"
-                        className={`w-full pl-10 pr-10 py-2.5 rounded-sm border text-xs placeholder-slate-400 transition input-sentinel ${
-                          isDark ? 'bg-canvas border-white/10 text-readable' : 'bg-slate-50 border-slate-300 text-slate-900'
-                        }`}
-                        required
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowForgotNewPassword(!showForgotNewPassword)}
-                        className={`absolute right-3 top-1/2 -translate-y-1/2 transition ${
-                          isDark ? 'text-muted hover:text-readable' : 'text-slate-400 hover:text-slate-700'
-                        }`}
-                      >
-                        {showForgotNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className={`text-xs font-bold ${isDark ? 'text-muted' : 'text-slate-700'}`}>
-                      Konfirmasi Password Baru
-                    </label>
-                    <div className="relative">
-                      <Lock className="w-4 h-4 text-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
-                      <input
-                        type={showForgotNewPassword ? 'text' : 'password'}
-                        value={forgotConfirmPassword}
-                        onChange={(e) => setForgotConfirmPassword(e.target.value)}
-                        placeholder="Ulangi password baru"
                         className={`w-full pl-10 pr-4 py-2.5 rounded-sm border text-xs placeholder:font-mono placeholder-slate-400 transition input-sentinel ${
                           isDark ? 'bg-canvas border-white/10 text-readable' : 'bg-slate-50 border-slate-300 text-slate-900'
                         }`}
