@@ -1,15 +1,30 @@
 <!doctype html>
-<html lang="id" class="dark">
+<html lang="id">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/dio-logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ProMan - Divisi IT Infrastructure Operations (DIO)</title>
+    <script>
+      // Apply persisted theme before the app mounts to avoid a theme flash.
+      (function () {
+        try {
+          var t = localStorage.getItem('proman_ai_theme_mode_v4');
+          var theme = (t === 'light' || t === 'dark') ? t : 'dark';
+          var el = document.documentElement;
+          el.classList.add(theme);
+          el.classList.remove(theme === 'dark' ? 'light' : 'dark');
+          el.setAttribute('data-theme', theme);
+        } catch (e) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   </head>
-  <body class="bg-brand-bg dark:bg-brand-bg-dark text-slate-900 dark:text-brand-readable font-sans antialiased selection:bg-signal selection:text-white overflow-hidden transition-colors duration-200">
+  <body class="bg-canvas-light dark:bg-canvas text-slate-900 dark:text-readable font-sans antialiased selection:bg-signal selection:text-white overflow-hidden transition-colors duration-200">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

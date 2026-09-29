@@ -166,18 +166,18 @@ export const Sidebar: React.FC = () => {
                   title={item.label}
                   className={`w-full flex items-center ${expanded ? 'justify-between px-3' : 'justify-center px-0'} py-2 rounded-md text-xs font-medium transition relative group ${
                     isActive
-                      ? 'bg-emerald-500/10 text-readable font-bold ring-1 ring-inset ring-emerald-500/40'
+                      ? 'bg-emerald-500/10 text-emerald-900 dark:text-readable font-bold ring-1 ring-inset ring-emerald-500/40'
                       : 'text-slate-600 dark:text-muted hover:text-slate-900 dark:hover:text-readable hover:bg-slate-100 dark:hover:bg-elevated/60'
                   }`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <span className={isActive ? 'text-white' : 'text-slate-500 dark:text-slate-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition'}>
+                    <span className={isActive ? 'text-emerald-900 dark:text-white' : 'text-slate-500 dark:text-slate-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition'}>
                       {item.icon}
                     </span>
                     {expanded && <span className="truncate">{item.label}</span>}
                   </div>
                   {expanded && item.badge !== undefined && (
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold shrink-0 ${isActive ? 'bg-emerald-500/20 text-emerald-200 font-mono' : 'bg-slate-200 dark:bg-elevated/60 text-slate-600 dark:text-muted font-mono'}`}>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold shrink-0 ${isActive ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 font-mono' : 'bg-slate-200 dark:bg-elevated/60 text-slate-600 dark:text-muted font-mono'}`}>
                       {item.badge}
                     </span>
                   )}
@@ -207,12 +207,12 @@ export const Sidebar: React.FC = () => {
               title="Daftar & Hub Project"
               className={`w-full flex items-center ${expanded ? 'justify-between px-3' : 'justify-center px-0'} py-2 rounded-md text-xs font-medium transition group ${
                 activeView === 'project_management'
-                  ? 'bg-emerald-500/10 text-readable font-bold ring-1 ring-inset ring-emerald-500/40'
+                  ? 'bg-emerald-500/10 text-emerald-900 dark:text-readable font-bold ring-1 ring-inset ring-emerald-500/40'
                   : 'text-slate-600 dark:text-muted hover:text-slate-900 dark:hover:text-readable hover:bg-slate-100 dark:hover:bg-elevated/60'
               }`}
             >
               <div className="flex items-center gap-2.5 min-w-0">
-                <FolderKanban className={`w-4 h-4 shrink-0 ${activeView === 'project_management' ? 'text-white' : 'text-slate-500 group-hover:text-emerald-600'}`} />
+                <FolderKanban className={`w-4 h-4 shrink-0 ${activeView === 'project_management' ? 'text-emerald-900 dark:text-white' : 'text-slate-500 group-hover:text-emerald-600'}`} />
                 {expanded && <span className="truncate">Daftar &amp; Hub Project</span>}
               </div>
               {expanded && <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
@@ -241,7 +241,7 @@ export const Sidebar: React.FC = () => {
                   title={item.label}
                   className={`w-full flex items-center ${expanded ? 'justify-between px-3' : 'justify-center px-0'} py-2 rounded-md text-xs font-medium transition relative group ${
                     isActive
-                      ? 'bg-emerald-500/10 text-readable font-bold ring-1 ring-inset ring-emerald-500/40'
+                      ? 'bg-emerald-500/10 text-emerald-900 dark:text-readable font-bold ring-1 ring-inset ring-emerald-500/40'
                       : 'text-slate-600 dark:text-muted hover:text-slate-900 dark:hover:text-readable hover:bg-slate-100 dark:hover:bg-elevated/60'
                   }`}
                 >
@@ -250,7 +250,7 @@ export const Sidebar: React.FC = () => {
                     {expanded && <span className="truncate">{item.label}</span>}
                   </div>
                   {expanded && item.badge && (
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold border shrink-0 ${isActive ? 'bg-emerald-500/20 text-emerald-200 font-mono border-emerald-700' : item.badgeColor}`}>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold border shrink-0 ${isActive ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 font-mono border-emerald-700' : item.badgeColor}`}>
                       {item.badge}
                     </span>
                   )}
@@ -298,7 +298,7 @@ export const Sidebar: React.FC = () => {
                 title="Admin Settings"
                 className={`w-full flex items-center ${expanded ? 'justify-between px-3' : 'justify-center px-0'} py-2 rounded-md text-xs font-medium transition group ${
                   activeView === 'admin_settings'
-                    ? 'bg-emerald-500/10 text-readable font-bold ring-1 ring-inset ring-emerald-500/40'
+                    ? 'bg-emerald-500/10 text-emerald-900 dark:text-readable font-bold ring-1 ring-inset ring-emerald-500/40'
                     : 'text-slate-600 dark:text-muted hover:text-slate-900 dark:hover:text-readable hover:bg-slate-100 dark:hover:bg-elevated/60'
                 }`}
               >
@@ -331,7 +331,7 @@ export const Sidebar: React.FC = () => {
               }}
               title={`Tugas Saya (${myTasksCount})`}
               className={`w-full flex items-center ${expanded ? 'justify-between px-3' : 'justify-center px-0'} py-1.5 rounded-md text-xs transition relative group ${
-                filters.assigneeId === currentUser.id ? 'bg-emerald-500/10 text-readable font-bold ring-1 ring-inset ring-emerald-500/40' : 'text-slate-600 dark:text-muted hover:bg-slate-100 dark:hover:bg-elevated/60'
+                filters.assigneeId === currentUser.id ? 'bg-emerald-500/10 text-emerald-900 dark:text-readable font-bold ring-1 ring-inset ring-emerald-500/40' : 'text-slate-600 dark:text-muted hover:bg-slate-100 dark:hover:bg-elevated/60'
               }`}
             >
               <div className="flex items-center gap-2 min-w-0">

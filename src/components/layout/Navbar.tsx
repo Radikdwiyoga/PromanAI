@@ -16,10 +16,12 @@ import {
   Crown,
   Layers,
   Menu,
-  Key
+  Key,
+  FileSpreadsheet
 } from 'lucide-react';
 import { TechLogo } from '../common/TechLogo';
 import { UserAvatar } from '../common/UserAvatar';
+import { exportTasksToExcel } from '../../services/backupService';
 
 export const Navbar: React.FC = () => {
   const {
@@ -39,6 +41,9 @@ export const Navbar: React.FC = () => {
     logout,
     setActiveView,
     setIsMobileSidebarOpen,
+    tasks,
+    users,
+    showToast,
   } = useProject();
 
   const { theme, toggleTheme } = useTheme();
@@ -107,7 +112,7 @@ export const Navbar: React.FC = () => {
                     }}
                     className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-xs transition text-left ${
                       currentProjectId === 'all'
-                        ? 'bg-emerald-500/10 text-readable font-bold ring-1 ring-inset ring-emerald-500/40'
+                        ? 'bg-emerald-500/10 text-emerald-900 dark:text-readable font-bold ring-1 ring-inset ring-emerald-500/40'
                         : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-elevated/60'
                     }`}
                   >
@@ -115,7 +120,7 @@ export const Navbar: React.FC = () => {
                       <Layers className="w-4 h-4" />
                       <span className="truncate font-semibold">Semua Project (Global Board)</span>
                     </div>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${currentProjectId === 'all' ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40' : 'bg-slate-200 dark:bg-elevated/60 text-slate-500 dark:text-muted'}`}>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${currentProjectId === 'all' ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 border border-emerald-500/40' : 'bg-slate-200 dark:bg-elevated/60 text-slate-500 dark:text-muted'}`}>
                       ALL
                     </span>
                   </button>
@@ -130,7 +135,7 @@ export const Navbar: React.FC = () => {
                       }}
                       className={`w-full flex items-center justify-between px-3 py-2 rounded-md text-xs transition text-left ${
                         p.id === currentProjectId
-                          ? 'bg-emerald-500/10 text-readable font-bold ring-1 ring-inset ring-emerald-500/40'
+                          ? 'bg-emerald-500/10 text-emerald-900 dark:text-readable font-bold ring-1 ring-inset ring-emerald-500/40'
                           : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-elevated/60'
                       }`}
                     >
@@ -138,7 +143,7 @@ export const Navbar: React.FC = () => {
                         <span>{p.icon}</span>
                         <span className="truncate">{p.name}</span>
                       </div>
-                      <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${p.id === currentProjectId ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40' : 'bg-slate-200 dark:bg-elevated/60 text-slate-500 dark:text-muted'}`}>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${p.id === currentProjectId ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 border border-emerald-500/40' : 'bg-slate-200 dark:bg-elevated/60 text-slate-500 dark:text-muted'}`}>
                         {p.healthScore}%
                       </span>
                     </button>
@@ -227,6 +232,23 @@ export const Navbar: React.FC = () => {
             title={`Beralih ke mode ${theme === 'dark' ? 'Terang (Light)' : 'Gelap (Dark)'}`}
           >
             {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-800" />}
+          </button>
+
+          {/* Backup Semua Tugas ke Excel */}
+          <button
+            onClick={() => {
+              try {
+                exportTasksToExcel(tasks, users, projects, systemSettings);
+                showToast('Backup semua tugas ke Excel berhasil diunduh!', 'success');
+              } catch (err) {
+                console.error('Excel export failed:', err);
+                showToast('Gagal membuat backup Excel. Coba lagi.', 'warning');
+              }
+            }}
+            className="p-2 rounded-md bg-slate-100 dark:bg-elevated hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-300 transition shadow-xs cursor-pointer"
+            title="Backup Semua Tugas ke Excel (.xlsx)"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
           </button>
 
           {/* User Info & Actions */}

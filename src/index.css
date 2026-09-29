@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Class-based dark mode: `dark:` variants respond to the `.dark` class
+   applied on <html> by ThemeContext, instead of prefers-color-scheme. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   /* --- Surface / Elevation --- */
   --color-canvas: #090d16;
@@ -159,6 +163,10 @@
 
 .dark ::-webkit-scrollbar-track {
   background: rgba(9, 13, 22, 0.8);
+}
+
+.light ::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.06);
 }
 
 ::-webkit-scrollbar-thumb {
