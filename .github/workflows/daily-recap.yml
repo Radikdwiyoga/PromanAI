@@ -1,0 +1,70 @@
+name: Daily Recap to Telegram
+
+# Mengirim rekap harian pekerjaan ke grup Telegram.
+#
+# Dipicu manual dengan `gh workflow run daily-recap.yml`, dan otomatis
+# setiap hari kerja Senin-Sabtu.
+#
+# Cron GitHub Actions memakai UTC. 01:00 UTC = 08:00 WIB.
+#
+# Catatan penting soal jadwal: GitHub Actions tidak menjamin eksekusi tepat
+# pada menitnya. Run bisa terlambat beberapa menit, dan kadang terlambat lebih
+# lama saat server GitHub sedang ramai. Kalau rekap benar-benar harus presisi,
+# opsi ini tidak cukup — Cloud Scheduler lebih akurat tapi butuh billing Blaze.
+
+on:
+  schedule:
+    # 01:00 UTC = 08:00 WIB. Hari 1-6 = Senin-Sabtu (hari minggu dilewati).
+    - cron: '0 1 * * 1-6'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Hanya cetak rekap, jangan kirim ke Telegram'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  recap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Tidak butuh npm ci: script ini hanya memakai fetch bawaan Node 22,
+      # tanpa dependency dari package.json. Installasi penuh hanya menambah
+      # waktu dan permukaan serangan tanpa dipakai.
+      - name: Send recap
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          VITE_TELEGRAM_BOT_TOKEN: ${{ secrets.VITE_TELEGRAM_BOT_TOKEN }}
+          VITE_TELEGRAM_CHAT_ID: ${{ secrets.VITE_TELEGRAM_CHAT_ID }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          missing=0
+          for name in FIREBASE_TOKEN VITE_TELEGRAM_BOT_TOKEN VITE_TELEGRAM_CHAT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name kosong."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::Isi ulang dengan scripts/set-github-secrets.ps1"
+            exit 1
+          fi
+
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            node scripts/send-daily-recap.mjs --dry-run
+          else
+            node scripts/send-daily-recap.mjs
+          fi
