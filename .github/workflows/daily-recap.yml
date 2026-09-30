@@ -3,7 +3,10 @@ name: Daily Recap to Telegram
 # Mengirim rekap harian pekerjaan ke grup Telegram.
 #
 # Dipicu manual dengan `gh workflow run daily-recap.yml`, dan otomatis
-# setiap hari kerja Senin-Sabtu.
+# setiap hari kerja Senin-Jumat.
+#
+# Sabtu dan Minggu dilewati: rekap pagi di hari libur tidak ada yang baca.
+# Kalau akhir pekan masih perlu rekap, ubah cron di bawah ke '0 1 * * *'.
 #
 # Cron GitHub Actions memakai UTC. 01:00 UTC = 08:00 WIB.
 #
@@ -14,8 +17,8 @@ name: Daily Recap to Telegram
 
 on:
   schedule:
-    # 01:00 UTC = 08:00 WIB. Hari 1-6 = Senin-Sabtu (hari minggu dilewati).
-    - cron: '0 1 * * 1-6'
+    # 01:00 UTC = 08:00 WIB. Hari 1-5 = Senin-Jumat.
+    - cron: '0 1 * * 1-5'
   workflow_dispatch:
     inputs:
       dry_run:
