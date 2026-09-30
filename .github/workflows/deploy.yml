@@ -28,6 +28,29 @@ jobs:
       # Build .env dari GitHub Secrets (AMAN — tidak pernah masuk
       # ke riwayat git, hanya tersedia saat build berjalan)
       # ============================================================
+
+      # Vite TIDAK gagal kalau import.meta.env kosong — dia cuma substituting
+      # string kosong. Akibatnya build tetap hijau tapi bundle-nya rusak total
+      # (Firebase tidak bisa diinisialisasi, tidak ada user yang bisa login).
+      # Karena itu secret dicek dulu, sebelum build jalan.
+      - name: Check required VITE secrets
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+        run: |
+          missing=0
+          for name in VITE_FIREBASE_API_KEY VITE_FIREBASE_PROJECT_ID VITE_FIREBASE_APP_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name belum diisi di Settings > Secrets and variables > Actions."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::Build dibatalkan supaya tidak ter-deploy bundle yang rusak."
+            exit 1
+          fi
+
       - name: Create .env from GitHub Secrets
         run: |
           echo "VITE_FIREBASE_API_KEY=${{ secrets.VITE_FIREBASE_API_KEY }}" >> .env
@@ -48,9 +71,34 @@ jobs:
       # ============================================================
       # Deploy hosting ke Firebase menggunakan token CI
       # (FIREBASE_TOKEN disimpan sebagai GitHub Secret — aman)
+      #
+      # --project wajib diisi. Tanpa itu, Firebase memakai project default
+      # milik token, yang belum tentu proman-83c57, dan deploy bisa
+      # diarahkan ke project yang salah.
       # ============================================================
+
+      # Cek secret-nya lebih dulu supaya kalau kosong, pesannya jelas dan
+      # bukan "Error: Invalid arguments" yang membingungkan.
+      #
+      # Secrets tidak otomatis tersedia sebagai variabel env, jadi nilainya
+      # harus disalin eksplisit dulu di baris env:.
+      - name: Check required secret
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          if [ -z "$FIREBASE_TOKEN" ]; then
+            echo "::error::FIREBASE_TOKEN belum diisi di Settings > Secrets and variables > Actions."
+            echo "::error::Buat token dengan perintah: firebase login:ci"
+            exit 1
+          fi
+          echo "FIREBASE_TOKEN tersedia."
+
       - name: Deploy to Firebase Hosting
-        run: npx firebase deploy --only hosting --token "${{ secrets.FIREBASE_TOKEN }}"
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        # --yes supaya npx tidak menunda install CLI dengan prompt interaktif,
+        # yang tidak bisa dijawab di runner GitHub.
+        run: npx --yes firebase-tools@latest deploy --only hosting --project proman-83c57 --token "$FIREBASE_TOKEN"
 
       # ============================================================
       # OPSIONAL: aktifkan baris ini untuk auto-deploy Cloud Functions
