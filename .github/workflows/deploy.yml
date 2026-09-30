@@ -93,14 +93,6 @@ jobs:
           fi
           echo "FIREBASE_TOKEN tersedia."
 
-      - name: Diagnose token
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
-        run: |
-          echo "panjang   : ${#FIREBASE_TOKEN}"
-          echo "sha256    : $(printf '%s' "$FIREBASE_TOKEN" | sha256sum | cut -c1-16)"
-          echo "ada CR/LF : $(printf '%s' "$FIREBASE_TOKEN" | od -c | grep -c '\\r\\|\\n' || true)"
-
       - name: Deploy to Firebase Hosting
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
