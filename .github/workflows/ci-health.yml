@@ -1,0 +1,162 @@
+name: CI Health Check
+
+# Diagnosa dini bahwa pipeline masih sehat, TANPA menyentuh hosting.
+#
+# Alasan workflow ini ada:
+#
+#   1. FIREBASE_TOKEN adalah refresh token yang secara resmi tidak punya
+#      tanggal kedaluwarsa, jadi tidak ada tanggal yang bisa dipantau.
+#      Satu-satunya cara untuk tahu dia masih hidup adalah mencobanya.
+#      Di sini dicoba lewat panggilan read-only, jadi hosting tidak
+#      tersentuh sama sekali.
+#
+#   2. Secret VITE pernah tersimpan sebagai placeholder 1 karakter tanpa
+#      siapa-siapa yang sadar, karena build tetap hijau. Pemeriksaan di
+#      sini menangkap itu: isinya diperiksa panjangnya, bukan cuma
+#      ada/tidaknya.
+#
+#   3. Kalau prosesnya rusak, ketahuan hari Minggu, bukan waktu sedang
+#      menunggu deploy penting.
+#
+# Semua langkah di sini read-only terhadap project. Tidak ada deploy.
+
+on:
+  schedule:
+    # Senin 06:00 UTC (= 13:00 WIB).
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check VITE secrets
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+        run: |
+          failed=0
+          for name in VITE_FIREBASE_API_KEY VITE_FIREBASE_PROJECT_ID \
+                      VITE_FIREBASE_APP_ID VITE_FIREBASE_AUTH_DOMAIN; do
+            value="${!name}"
+            if [ -z "$value" ]; then
+              echo "::error::Secret $name kosong."
+              failed=1
+            elif [ "$value" = "-" ] || [ "${#value}" -lt 8 ]; then
+              # Panjang < 8 mustahil untuk API key Firebase asli. Ini
+              # persis kondisi yang pernah terjadi tanpa disadari.
+              echo "::error::Secret $name berisi placeholder (${#value} karakter), bukan nilai asli."
+              failed=1
+            else
+              echo "  OK  $name (${#value} karakter)"
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::Jalankan scripts/set-github-secrets.ps1 lalu ulangi."
+            exit 1
+          fi
+
+      - name: Build production bundle
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_MEASUREMENT_ID: ${{ secrets.VITE_FIREBASE_MEASUREMENT_ID }}
+          VITE_GROQ_API_KEY: ${{ secrets.VITE_GROQ_API_KEY }}
+          VITE_OPENROUTER_API_KEY: ${{ secrets.VITE_OPENROUTER_API_KEY }}
+          VITE_TELEGRAM_BOT_TOKEN: ${{ secrets.VITE_TELEGRAM_BOT_TOKEN }}
+          VITE_TELEGRAM_CHAT_ID: ${{ secrets.VITE_TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          for name in VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN \
+                      VITE_FIREBASE_PROJECT_ID VITE_FIREBASE_STORAGE_BUCKET \
+                      VITE_FIREBASE_MESSAGING_SENDER_ID VITE_FIREBASE_APP_ID \
+                      VITE_FIREBASE_MEASUREMENT_ID VITE_GROQ_API_KEY \
+                      VITE_OPENROUTER_API_KEY VITE_TELEGRAM_BOT_TOKEN \
+                      VITE_TELEGRAM_CHAT_ID; do
+            echo "$name=${!name}" >> .env
+          done
+          npm run build
+
+      # ------------------------------------------------------------------
+      # Ini inti dari workflow ini: membuktikan token masih diterima,
+      # tanpa melakukan deploy.
+      #
+      # Di runner GitHub tidak ada cache login firebase-tools, jadi
+      # perintah ini benar-benar memakai --token. Kalau token dicabut,
+      # hasilnya 401 di sini — bukan 40 menit kemudian saat deploy.
+      #
+      # hosting:sites:list hanya membaca daftar site, tidak mengubah apa pun.
+      # ------------------------------------------------------------------
+      - name: Validate Firebase token (read-only)
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          if [ -z "$FIREBASE_TOKEN" ]; then
+            echo "::error::FIREBASE_TOKEN kosong."
+            exit 1
+          fi
+
+          set +e
+          output=$(npx --yes firebase-tools@latest hosting:sites:list \
+                     --project proman-83c57 --token "$FIREBASE_TOKEN" 2>&1)
+          status=$?
+          set -e
+
+          echo "$output" | grep -q "proman-83c57" || {
+            echo "$output"
+            echo "::error::Token ditolak Firebase. Isi ulang dengan scripts/set-github-secrets.ps1"
+            exit 1
+          }
+
+          if [ "$status" -ne 0 ]; then
+            echo "$output"
+            echo "::warning::Token diterima tapi CLI keluar dengan kode $status."
+          else
+            echo "Token Firebase valid dan punya akses ke proman-83c57."
+          fi
+
+      # Konfirmasi situs yang sedang hidup memang masih Serving, supaya
+      # kegagalan deploy terakhir tidak ketahuan hanya dari sisi pengguna.
+      - name: Check live site
+        run: |
+          url="https://proman-83c57.web.app"
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
+          if [ "$code" != "200" ]; then
+            echo "::error::$url merespons HTTP $code"
+            exit 1
+          fi
+
+          bundle=$(curl -s "$url" | grep -o 'assets/index-[A-Za-z0-9_-]*\.js' | head -1)
+          if [ -z "$bundle" ]; then
+            echo "::error::Tidak menemukan referensi bundle JS di halaman."
+            exit 1
+          fi
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$url/$bundle")
+          if [ "$code" != "200" ]; then
+            echo "::error::Bundle $bundle merespons HTTP $code"
+            exit 1
+          fi
+
+          echo "Situs hidup: HTTP 200, bundle $bundle termuat."
