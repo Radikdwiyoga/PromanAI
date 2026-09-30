@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "proman-83c57",
     "public": "dist",
     "ignore": [
       "firebase.json",
