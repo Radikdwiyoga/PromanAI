@@ -12,8 +12,9 @@
 - [Kelebihan Aplikasi](#-kelebihan-aplikasi)
 - [Kekurangan & Area Pengembangan](#-kekurangan--area-pengembangan)
 - [Panduan Instalasi & Setup](#-panduan-instalasi--setup)
+- [Pipeline Otomasi (GitHub Actions)](#-pipeline-otomasi-github-actions)
 - [Struktur Direktori Proyek](#-struktur-direktori-proyek)
-- [Akun Demo & Role Pengguna](#-akun-demo--role-pengguna)
+- [Akun Pengguna & Peran](#-akun-pengguna--peran)
 
 ---
 
@@ -40,9 +41,20 @@
 ### 4. 👥 Manajemen Tim & Tata Kelola Enterprise
 * **Super Admin Control Center**: Manajemen persetujuan akun (*pending approval*), penugasan role/jabatan, manajemen kapasitas jam kerja (*Capacity vs Allocated Hours*), dan privasi data AI.
 * **Smart Resource / Beban Kerja**: Indikator beban kerja tim untuk mencegah kelebihan alokasi (*overload*) personel.
-* **Keamanan & Privasi Password**: Masking password pengguna di panel admin dengan toggle buka/tutup independen.
+* **Keamanan Akun**: Password hanya tersimpan di Firebase Authentication (hash), tidak pernah ditulis ke Firestore. Firestore dilindungi *Security Rules* deny-by-default sehingga data tidak bisa dibaca tanpa login.
 * **Inactivity Session Timeout**: Auto-logout cerdas setelah 10 menit tidak ada aktivitas pengguna demi menjaga keamanan workstation.
 * **Auto-Hide Icon Sidebar**: Navigasi samping ringkas (*icon-only mode*) yang otomatis melebar saat di-*hover* dan dapat dikunci (*pin*).
+
+### 5. 📨 Notifikasi Telegram Otomatis
+* **Notifikasi Perubahan Real-Time**: Setiap pembuatan tugas, perubahan judul/prioritas/tenggat/assignee, pergantian status, dan komentar baru langsung diteruskan ke grup Telegram sebagai pesan ringkas.
+* **Rekap Harian Terjadwal**: Tiap pagi Senin–Jumat pukul **08:00 WIB**, bot mengirim rekap kondisi pekerjaan ke grup tanpa perlu membuka aplikasi.
+* **Isi Rekap** (diurutkan dari yang paling mendesak):
+  1. **🔴 Terlambat** — tugas yang sudah melewati tenggat, dikelompokkan per assignee lengkap dengan jumlah hari keterlambatan
+  2. **⏰ Jatuh Tempo Hari Ini**
+  3. **⚠️ Belum Ada Assignee** — tugas yang belum ditugaskan ke siapa pun
+  4. **📝 Belum Dimulai** — masih berstatus *To Do* / *Backlog*
+  5. **🔥 Sedang Berjalan** — lengkap dengan nama project
+* **Terjadwal Tanpa Server**: Rekap dikirim langsung dari pipeline CI, sehingga tetap terkirim meskipun tidak ada satu pun pengguna yang membuka aplikasi. Tidak memerlukan Cloud Functions maupun billing tambahan.
 
 ---
 
@@ -57,6 +69,8 @@
 | **Authentication** | Firebase Authentication (Local Persistence & Session Guard) |
 | **AI & LLM Engine** | ProMan AI Engine (Integrasi Groq & OpenRouter API) |
 | **Hosting & Deployment** | Firebase Hosting (Global CDN) |
+| **Notifikasi** | Telegram Bot API (real-time & rekap harian terjadwal) |
+| **CI/CD & Otomasi** | GitHub Actions (auto-deploy, health check, scheduled recap) |
 
 ---
 
@@ -69,7 +83,7 @@
    ProMan AI hadir langsung di alur kerja operasional: estimasi tugas saat pembuatan tiket, pemecahan tugas inisiatif besar, pemberian solusi kendala teknis, hingga penyusunan laporan mingguan/bulanan berformat eksekutif.
 
 3. **Keamanan & Privasi Enterprise**  
-   Dilengkapi *Inactivity Session Timeout (10 menit)*, proteksi approval akun baru oleh Super Admin, enkripsi sesi berbasis *local persistence*, dan proteksi privasi password.
+   Dilengkapi *Inactivity Session Timeout (10 menit)*, proteksi approval akun baru oleh Super Admin, enkripsi sesi berbasis *local persistence*, serta autentikasi penuh berbasis Firebase Auth. Setiap akses Firestore diverifikasi ulang oleh *Security Rules* di sisi server, bukan hanya disembunyikan di antarmuka.
 
 4. **Desain Modern, Responsif, & Ringan (Corporate Green)**  
    Antarmuka berstandar enterprise dengan tema hijau profesional, dukungan Dark/Light mode, transisi halus, serta *Auto-Hide Sidebar* yang memaksimalkan area kerja Kanban dan Gantt Chart.
@@ -84,8 +98,8 @@
 1. **Ketergantungan pada Koneksi Internet & API Pihak Ketiga**  
    Fitur ProMan AI dan sinkronisasi data realtime memerlukan koneksi internet aktif serta API Key LLM yang valid. Belum tersedia mode offline (*offline cache with local queue sync*).
 
-2. **Belum Ada Notifikasi Push / Email Eksternal**  
-   Notifikasi penugasan tiket dan peringatan delay saat ini baru ditampilkan via *in-app toast* dan *activity logs*, belum terhubung ke email (SMTP) atau webhook Discord/Slack/Telegram.
+2. **Belum Ada Notifikasi Email (SMTP)**  
+   Notifikasi real-time sudah berjalan ke Telegram (perubahan tugas, status, komentar, serta rekap harian terjadwal), namun belum tersedia kanal email maupun webhook Discord/Slack.
 
 3. **Kustomisasi Role (RBAC) Masih Berbasis Preset**  
    Hak akses saat ini menggunakan 3 peran utama (*Super Admin, Project Manager, Member*). Fitur pembuatan hak akses kustom granular per-izin menu (*custom fine-grained RBAC*) dapat dikembangkan lebih lanjut.
@@ -173,6 +187,65 @@
 
 ---
 
+## ⚙️ Pipeline Otomasi (GitHub Actions)
+
+Repo ini memakai tiga workflow terpisah di `.github/workflows/`. Semuanya
+berjalan di runner GitHub, jadi tidak ada server yang perlu selalu menyala.
+
+| Workflow | Kapan Jalan | Fungsi |
+|---|---|---|
+| `deploy.yml` | Setiap `push` ke `main` | Build produksi lalu deploy ke Firebase Hosting |
+| `ci-health.yml` | Senin 06:00 UTC (13:00 WIB) | Memeriksa secret, build, validasi token, dan kesehatan situs — **tanpa deploy** |
+| `daily-recap.yml` | Senin–Jumat 01:00 UTC (08:00 WIB) | Mengirim rekap harian ke grup Telegram |
+
+### Kenapa health check ada?
+
+`FIREBASE_TOKEN` adalah *refresh token* yang secara resmi tidak punya tanggal
+kedaluwarsa — jadi tidak ada yang bisa dipantau. Satu-satunya cara untuk tahu
+masih valid adalah mencobanya. Health check melakukannya setiap minggu lewat
+panggilan *read-only*, sehingga hosting tidak pernah tersentuh dan masalahnya
+ketahuan lebih awal, bukan saat deploy penting sedang menunggu.
+
+### Rekap harian Telegram
+
+Divalidasi dengan mode *dry-run* yang tidak mengirim apa pun:
+
+```powershell
+# Lihat hasilnya tanpa kirim
+& "C:\Program Files\GitHub CLI\gh.exe" workflow run daily-recap.yml `
+  --repo Radikdwiyoga/PromanAI --field dry_run=true
+
+# Kirim sekarang juga
+& "C:\Program Files\GitHub CLI\gh.exe" workflow run daily-recap.yml `
+  --repo Radikdwiyoga/PromanAI
+```
+
+Rekap yang lebih panjang dari batas 4096 karakter Telegram akan dipecah
+otomatis pada batas baris (tidak pernah di tengah tag HTML) dan ditandai
+*"(lanjutan)"*.
+
+> ⚠️ **GitHub Actions tidak menjamin jadwal tepat pada menitnya.** Run bisa
+> terlambat beberapa menit, dan kadang lebih lama saat server GitHub sedang
+> ramai. Untuk jadwal yang harus presisi, opsi ini perlu digantikan *Cloud
+> Scheduler* — yang menuntut upgrade billing ke plan Blaze.
+>
+> Selain itu, GitHub menonaktifkan jadwal otomatis pada repo yang tidak ada
+> aktivitas selama 60 hari.
+
+### Script Utilitas
+
+| Script | Kegunaan |
+|---|---|
+| `scripts/set-github-secrets.ps1` | Mengisi GitHub Secrets dari `.env` lokal + token Firebase |
+| `scripts/send-daily-recap.mjs` | Menyusun dan mengirim rekap harian (`--dry-run` untuk simulasi) |
+| `scripts/migrate-users-to-auth.mjs` | Migrasi user lama ke Firebase Auth (dua tahap: dry-run lalu `--apply`) |
+| `scripts/verify-migration.mjs` | Verifikasi UID Auth sinkron dengan dokumen Firestore |
+| `scripts/strip-plaintext-passwords.mjs` | Menghapus field password plaintext dari Firestore |
+| `scripts/disable-orphan-auth.mjs` | Menonaktifkan akun Auth yang dokumen `/users`-nya sudah hilang |
+| `scripts/clean-dangling-refs.mjs` | Membersihkan referensi `assigneeIds`/`userId` yang menggantung |
+
+---
+
 ## 📂 Struktur Direktori Proyek
 
 ```
@@ -194,8 +267,10 @@ src/
 │   └── initialData.ts       # Mock Seeder & Initial Structures
 ├── services/
 │   ├── authService.ts       # Firebase Authentication & Session Service
-│   ├── databaseService.ts   # Firestore CRUD & Realtime Subscriptions
+│   ├── firestoreService.ts  # Firestore CRUD & Realtime Subscriptions
 │   ├── firebase.ts          # Firebase App Initialization & Persistence
+│   ├── telegramService.ts   # Telegram Bot Notifications (realtime & rekap)
+│   ├── backupService.ts     # Excel Export & System Backup
 │   └── geminiService.ts     # ProMan AI Engine (LLM API Integrations)
 ├── types/
 │   └── index.ts             # TypeScript Type Definitions & Interfaces
@@ -204,18 +279,49 @@ src/
 ├── App.tsx                  # Core App Component & View Routing
 ├── index.css                # Global Tailwind CSS & Animations
 └── main.tsx                 # Entry Point
+
+.github/workflows/
+├── deploy.yml               # Auto-deploy ke Firebase Hosting saat push
+├── ci-health.yml            # Health check mingguan (read-only)
+└── daily-recap.yml          # Rekap harian terjadwal ke Telegram
+
+scripts/                     # Utilitas Admin SDK & otomasi (Node)
+firestore.rules              # Security Rules (deny-by-default)
 ```
 
 ---
 
-## 🔑 Akun Demo & Role Pengguna
+## 🔑 Akun Pengguna & Peran
 
-| Role | Email Login | Password Default | Akses Utama |
-|---|---|---|---|
-| **Super Admin** | `admin@perusahaan.id` | `admin123` | Tata Kelola Enterprise, Admin Settings, Approval User, Konfigurasi AI |
-| **Project Manager** | `alex@perusahaan.id` | `alex123` | Manajemen Project, Ekspor Laporan, Monitoring Beban Kerja Tim |
-| **Senior Specialist** | `budi@perusahaan.id` | `budi123` | Papan Kanban, Kalender, Timeline, Task Troubleshooting |
-| **Team Member** | `citra@perusahaan.id` | `citra123` | Papan Kanban, Filter Tugas Saya, Copilot Assistant |
+ProMan tidak lagi menyediakan akun demo dengan password bawaan yang tertulis
+di dokumen. Password hanya tersimpan di Firebase Authentication dalam bentuk
+hash, dan tidak pernah disimpan di Firestore maupun di repository.
+
+| Peran | Email Login | Akses Utama |
+|---|---|---|
+| **Super Admin** | `admin@bitcorp.id` | Tata Kelola Enterprise, Admin Settings, Approval User, Konfigurasi AI |
+| **Team Member** | `radik.dwiyoga@bitcorp.id` | Papan Kanban, Kalender, Timeline, Copilot Assistant |
+
+### Cara membuat akun baru
+
+1. Buka halaman Register di aplikasi, lalu daftar memakai email korporat.
+2. Akun berstatus *pending* sampai disetujui Super Admin di panel pengaturan.
+3. Setelah disetujui, akun otomatis dibuat di Firebase Auth dan langsung
+   bisa login.
+
+> 💡 Email demo yang pernah ada di README versi sebelumnya
+> (`*@perusahaan.id`) sudah dihapus dari Firestore. Password-nya tidak dapat
+> dipulihkan — akun lama dibuat dengan password yang sudah dibuang, dan
+> Akun Auth-nya sudah dinonaktifkan. Jika butuh akun demo untuk uji coba,
+> daftarkan lewat halaman Register.
+
+### Menghapus pengguna
+
+Penghapusan pengguna bersifat *soft delete*: dokumen `/users` ditandai
+`status: 'rejected'` dan akun Auth-nya dinonaktifkan. Ini disengaja —
+klien tidak bisa menonaktifkan akun Firebase Auth secara langsung, sehingga
+penghapusan permanen selalu meninggalkan akun yang masih bisa login. Data
+historis (komentar, activity log) tetap referensial ke dokumen asli.
 
 ---
 
