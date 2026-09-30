@@ -9,6 +9,26 @@
 # maupun di log runner. Token Firebase diambil langsung dari cache
 # firebase-tools (yang sudah dipakai `firebase login` lokal), jadi tidak
 # perlu menjalankan `firebase login:ci` secara interaktif.
+#
+# ---------------------------------------------------------------------------
+# KAPAN HARUS DIJALANKAN ULANG
+#
+# Build di GitHub Actions membaca konfigurasi dari GitHub Secrets, BUKAN
+# dari file .env di laptop. Jadi mengubah .env secara lokal tidak
+# berpengaruh apa-apa ke situs sampai script ini dijalankan ulang.
+#
+# Kalau kamu mengganti nilai di .env (API key, token Telegram, dll):
+#
+#   1. powershell -NoProfile -ExecutionPolicy Bypass `
+#        -File scripts/set-github-secrets.ps1
+#   2. git add -A; git commit -m "..."; git push
+#
+# Langkah 2 hanya memicu deploy. Kalau dilewati, situsnya tetap memakai
+# nilai lama walaupun .env lokal sudah diperbarui.
+#
+# Perhatikan juga: `git push` hanya memicu deploy kalau branch-nya `main`.
+# Push ke branch lain tidak mengubah situs sampai di-merge ke main.
+# ---------------------------------------------------------------------------
 param(
   [string]$Repo = 'Radikdwiyoga/PromanAI'
 )

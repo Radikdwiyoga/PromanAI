@@ -155,6 +155,22 @@
    npx firebase deploy --only hosting
    ```
 
+7. **Deploy otomatis lewat GitHub Actions** (opsional, sudah aktif di repo ini):
+   Setiap `git push` ke branch `main` akan otomatis build dan deploy ke
+   Firebase Hosting. Tidak perlu menjalankan perintah pada langkah 6 lagi.
+
+   > ⚠️ **Build di CI membaca konfigurasi dari GitHub Secrets, bukan dari
+   > `.env` lokal.** Mengubah `.env` di laptop tidak berpengaruh ke situs
+   > sampai secret-nya diisi ulang:
+   > ```powershell
+   > powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set-github-secrets.ps1
+   > ```
+   > Setelah itu baru `git push` untuk memicu deploy. Push ke branch selain
+   > `main` tidak mengubah situs sampai di-merge ke `main`.
+
+   Kalau build gagal, situs lama tetap hidup — deploy baru jalan setelah
+   step build sukses.
+
 ---
 
 ## 📂 Struktur Direktori Proyek
